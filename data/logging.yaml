@@ -1,0 +1,89 @@
+# Indico logging configuration (Python logging dictConfig)
+# - Console: human-readable text
+# - Files: rotating text logs + rotating JSON-style logs
+
+version: 1
+disable_existing_loggers: false
+
+root:
+  level: INFO
+  handlers: [other_text]
+
+loggers:
+  indico:
+    level: INFO
+    handlers: [stderr_text, indico_text, indico_json]
+    propagate: false
+  celery:
+    level: INFO
+    handlers: [stderr_text, celery_text, celery_json]
+    propagate: false
+
+handlers:
+  stderr_text:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: default
+    stream: ext://sys.stdout
+
+  indico_text:
+    class: logging.handlers.RotatingFileHandler
+    level: INFO
+    filename: /opt/indico/log/indico.log
+    maxBytes: 10485760
+    backupCount: 5
+    filters: [indico]
+    formatter: default
+
+  indico_json:
+    class: logging.handlers.RotatingFileHandler
+    level: INFO
+    filename: /opt/indico/log/indico.json.log
+    maxBytes: 10485760
+    backupCount: 5
+    filters: [indico]
+    formatter: json
+
+  celery_text:
+    class: logging.handlers.RotatingFileHandler
+    level: INFO
+    filename: /opt/indico/log/celery.log
+    maxBytes: 10485760
+    backupCount: 5
+    filters: [celery]
+    formatter: simple
+
+  celery_json:
+    class: logging.handlers.RotatingFileHandler
+    level: INFO
+    filename: /opt/indico/log/celery.json.log
+    maxBytes: 10485760
+    backupCount: 5
+    filters: [celery]
+    formatter: json
+
+  other_text:
+    class: logging.handlers.RotatingFileHandler
+    level: WARNING
+    filename: /opt/indico/log/other.log
+    maxBytes: 5242880
+    backupCount: 3
+    filters: [other]
+    formatter: simple
+
+formatters:
+  default:
+    format: "%(asctime)s  %(levelname)-7s  %(request_id)s  %(user_id)-6s  %(name)-25s %(message)s"
+  simple:
+    format: "%(asctime)s  %(levelname)-7s  %(name)-25s %(message)s"
+  json:
+    format: '{"timestamp":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","request_id":"%(request_id)s","user_id":"%(user_id)s","message":"%(message)s"}'
+
+filters:
+  indico:
+    name: indico
+  celery:
+    name: celery
+  other:
+    (): indico.core.logger.BlacklistFilter
+    names: [indico, celery]
