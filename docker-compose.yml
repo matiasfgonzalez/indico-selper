@@ -2,6 +2,7 @@ services:
   indico:
     image: ghcr.io/indico/indico:latest
     container_name: indico
+    restart: unless-stopped
     command: /opt/indico/run_indico.sh
     ports:
       - "8000:59999"
@@ -29,10 +30,14 @@ services:
       XDG_CACHE_HOME: /opt/indico/tmp/.cache
       MPLCONFIGDIR: /opt/indico/tmp/matplotlib
     depends_on:
-      - postgres
-      - redis
-      - mailpit
-      - indico-celery
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      indico-celery:
+        condition: service_started
     tmpfs:
       - /opt/indico/tmp:mode=0777
       - /var/cache/fontconfig:uid=999,gid=999,mode=0775
@@ -40,6 +45,7 @@ services:
   indico-celery:
     image: ghcr.io/indico/indico:latest
     container_name: indico-celery
+    restart: unless-stopped
     command: /opt/indico/run_celery.sh
     volumes:
       - indico-archive:/opt/indico/archive
@@ -64,9 +70,12 @@ services:
       XDG_CACHE_HOME: /opt/indico/tmp/.cache
       MPLCONFIGDIR: /opt/indico/tmp/matplotlib
     depends_on:
-      - postgres
-      - redis
-      - mailpit
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
     tmpfs:
       - /opt/indico/tmp:mode=0777
       - /var/cache/fontconfig:uid=999,gid=999,mode=0775
@@ -74,6 +83,7 @@ services:
   indico-celery-beat:
     image: ghcr.io/indico/indico:latest
     container_name: indico-celery-beat
+    restart: unless-stopped
     command: /opt/indico/run_celery.sh beat
     volumes:
       - indico-archive:/opt/indico/archive
@@ -98,9 +108,12 @@ services:
       XDG_CACHE_HOME: /opt/indico/tmp/.cache
       MPLCONFIGDIR: /opt/indico/tmp/matplotlib
     depends_on:
-      - postgres
-      - redis
-      - mailpit
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
     tmpfs:
       - /opt/indico/tmp:mode=0777
       - /var/cache/fontconfig:uid=999,gid=999,mode=0775
@@ -108,22 +121,35 @@ services:
   postgres:
     image: postgres:15
     container_name: indico-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: indico
       POSTGRES_PASSWORD: indico
       POSTGRES_DB: indico
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U indico -d indico"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7
     container_name: indico-redis
+    restart: unless-stopped
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   mailpit:
     image: axllent/mailpit:latest
     container_name: indico-mailpit
+    restart: unless-stopped
     ports:
       - "8025:8025"
       - "1025:1025"
