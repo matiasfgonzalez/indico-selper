@@ -1,0 +1,23 @@
+# Secretos / entorno (NUNCA versionar)
+.env
+.env.*
+!.env.example
+
+# Backups
+backups/
+*.sql
+*.sql.gz
+*.dump
+*.tar
+*.tar.gz
+
+# Certificados / claves
+*.pem
+*.key
+*.crt
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+.claude
