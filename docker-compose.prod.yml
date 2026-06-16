@@ -1,0 +1,164 @@
+# =============================================================================
+# Stack de PRODUCCION para Indico (VPS Donweb)
+#
+# Uso:
+#   cp .env.example .env   # completar secretos reales
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Diferencias clave respecto a docker-compose.yml (local):
+#   - Sin Mailpit: se usa SMTP real (variables INDICO_SMTP_*).
+#   - Imagenes con version fija (variables *_IMAGE en .env), no "latest".
+#   - restart: unless-stopped y healthchecks en todos los servicios.
+#   - El web se publica SOLO en 127.0.0.1 -> lo expone nginx (TLS) del host.
+#   - Secretos (SECRET_KEY, passwords, SMTP) vienen de .env, no del repo.
+# =============================================================================
+
+services:
+  indico:
+    image: ${INDICO_IMAGE:-ghcr.io/indico/indico:3.3}
+    container_name: indico
+    restart: unless-stopped
+    command: /opt/indico/run_indico.sh
+    ports:
+      # Solo loopback: nginx del host hace de proxy inverso con HTTPS.
+      - "127.0.0.1:${INDICO_HTTP_BIND:-8000}:59999"
+    env_file: .env
+    environment:
+      INDICO_CONFIG: /opt/indico/etc/indico.conf
+      INDICO_LOGGING_CONFIG: /opt/indico/etc/logging.yaml
+      XDG_CACHE_HOME: /opt/indico/tmp/.cache
+      MPLCONFIGDIR: /opt/indico/tmp/matplotlib
+    volumes:
+      - indico-archive:/opt/indico/archive
+      - indico-custom:/opt/indico/custom
+      - indico-static:/opt/indico/static-shared
+      - indico-log:/opt/indico/log
+      - indico-cache:/opt/indico/cache
+      - type: bind
+        source: ./data/indico.conf
+        target: /opt/indico/etc/indico.conf
+        read_only: true
+      - type: bind
+        source: ./data/logging.yaml
+        target: /opt/indico/etc/logging.yaml
+        read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      indico-celery:
+        condition: service_started
+    tmpfs:
+      - /opt/indico/tmp:mode=0777
+      - /var/cache/fontconfig:uid=999,gid=999,mode=0775
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1',59999),5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  indico-celery:
+    image: ${INDICO_IMAGE:-ghcr.io/indico/indico:3.3}
+    container_name: indico-celery
+    restart: unless-stopped
+    command: /opt/indico/run_celery.sh
+    env_file: .env
+    environment:
+      INDICO_CONFIG: /opt/indico/etc/indico.conf
+      INDICO_LOGGING_CONFIG: /opt/indico/etc/logging.yaml
+      XDG_CACHE_HOME: /opt/indico/tmp/.cache
+      MPLCONFIGDIR: /opt/indico/tmp/matplotlib
+    volumes:
+      - indico-archive:/opt/indico/archive
+      - indico-custom:/opt/indico/custom
+      - indico-log:/opt/indico/log
+      - indico-cache:/opt/indico/cache
+      - type: bind
+        source: ./data/indico.conf
+        target: /opt/indico/etc/indico.conf
+        read_only: true
+      - type: bind
+        source: ./data/logging.yaml
+        target: /opt/indico/etc/logging.yaml
+        read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    tmpfs:
+      - /opt/indico/tmp:mode=0777
+      - /var/cache/fontconfig:uid=999,gid=999,mode=0775
+
+  indico-celery-beat:
+    image: ${INDICO_IMAGE:-ghcr.io/indico/indico:3.3}
+    container_name: indico-celery-beat
+    restart: unless-stopped
+    command: /opt/indico/run_celery.sh beat
+    env_file: .env
+    environment:
+      INDICO_CONFIG: /opt/indico/etc/indico.conf
+      INDICO_LOGGING_CONFIG: /opt/indico/etc/logging.yaml
+      XDG_CACHE_HOME: /opt/indico/tmp/.cache
+      MPLCONFIGDIR: /opt/indico/tmp/matplotlib
+    volumes:
+      - indico-archive:/opt/indico/archive
+      - indico-custom:/opt/indico/custom
+      - indico-log:/opt/indico/log
+      - indico-cache:/opt/indico/cache
+      - type: bind
+        source: ./data/indico.conf
+        target: /opt/indico/etc/indico.conf
+        read_only: true
+      - type: bind
+        source: ./data/logging.yaml
+        target: /opt/indico/etc/logging.yaml
+        read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    tmpfs:
+      - /opt/indico/tmp:mode=0777
+      - /var/cache/fontconfig:uid=999,gid=999,mode=0775
+
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:15}
+    container_name: indico-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER:-indico}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?Define PGPASSWORD en .env}
+      POSTGRES_DB: ${PGDATABASE:-indico}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-indico} -d ${PGDATABASE:-indico}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7}
+    container_name: indico-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:
+  indico-archive:
+  indico-custom:
+  indico-static:
+  indico-log:
+  indico-cache:
