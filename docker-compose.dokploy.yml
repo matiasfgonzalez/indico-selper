@@ -1,0 +1,202 @@
+# =============================================================================
+# Stack de Indico para DOKPLOY (VPS con Docker + Traefik gestionado por Dokploy)
+#
+# Diferencias respecto a docker-compose.prod.yml:
+#   - NO se publican puertos al host. Traefik (que instala Dokploy) enruta al
+#     contenedor web por la red 'dokploy-network' usando labels.
+#   - HTTPS lo resuelve Traefik con Let's Encrypt (certresolver 'letsencrypt',
+#     el nombre por defecto que configura Dokploy). No hay nginx ni certbot.
+#   - postgres / redis / celery viven en una red interna privada 'indico-internal'
+#     y NO son accesibles desde fuera.
+#
+# Uso en Dokploy:
+#   1) Crear un servicio tipo "Compose" (desde este repo Git o pegando el YAML).
+#   2) Cargar las variables de .env.example (adaptadas) en la pestaña Environment.
+#   3) Deploy. El dominio indico.matudev.com.ar queda servido por Traefik.
+#
+# Requisito: la red externa 'dokploy-network' ya existe (la crea Dokploy).
+# =============================================================================
+
+services:
+  indico:
+    image: ${INDICO_IMAGE:-ghcr.io/indico/indico:3.3}
+    container_name: indico
+    restart: unless-stopped
+    command: /opt/indico/run_indico.sh
+    # Sin 'ports': Traefik llega por la red interna al puerto 59999.
+    env_file: .env
+    environment:
+      INDICO_CONFIG: /opt/indico/etc/indico.conf
+      INDICO_LOGGING_CONFIG: /opt/indico/etc/logging.yaml
+      XDG_CACHE_HOME: /opt/indico/tmp/.cache
+      MPLCONFIGDIR: /opt/indico/tmp/matplotlib
+    volumes:
+      - indico-archive:/opt/indico/archive
+      - indico-custom:/opt/indico/custom
+      - indico-static:/opt/indico/static-shared
+      - indico-log:/opt/indico/log
+      - indico-cache:/opt/indico/cache
+      - type: bind
+        source: ./data/indico.conf
+        target: /opt/indico/etc/indico.conf
+        read_only: true
+      - type: bind
+        source: ./data/logging.yaml
+        target: /opt/indico/etc/logging.yaml
+        read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      indico-celery:
+        condition: service_started
+    tmpfs:
+      - /opt/indico/tmp:mode=0777
+      - /var/cache/fontconfig:uid=999,gid=999,mode=0775
+    networks:
+      - indico-internal
+      - dokploy-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1',59999),5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      # --- HTTP -> redirect a HTTPS ---
+      - "traefik.http.routers.indico-web.rule=Host(`indico.matudev.com.ar`)"
+      - "traefik.http.routers.indico-web.entrypoints=web"
+      - "traefik.http.routers.indico-web.middlewares=indico-redirect-https"
+      - "traefik.http.middlewares.indico-redirect-https.redirectscheme.scheme=https"
+      # --- HTTPS ---
+      - "traefik.http.routers.indico-secure.rule=Host(`indico.matudev.com.ar`)"
+      - "traefik.http.routers.indico-secure.entrypoints=websecure"
+      - "traefik.http.routers.indico-secure.tls=true"
+      - "traefik.http.routers.indico-secure.tls.certresolver=letsencrypt"
+      # Puerto interno del contenedor web de Indico:
+      - "traefik.http.services.indico.loadbalancer.server.port=59999"
+      # Indico sube materiales grandes: subir el limite de body en Traefik.
+      - "traefik.http.middlewares.indico-body.buffering.maxRequestBodyBytes=1073741824"
+      - "traefik.http.routers.indico-secure.middlewares=indico-body"
+
+  indico-celery:
+    image: ${INDICO_IMAGE:-ghcr.io/indico/indico:3.3}
+    container_name: indico-celery
+    restart: unless-stopped
+    command: /opt/indico/run_celery.sh
+    env_file: .env
+    environment:
+      INDICO_CONFIG: /opt/indico/etc/indico.conf
+      INDICO_LOGGING_CONFIG: /opt/indico/etc/logging.yaml
+      XDG_CACHE_HOME: /opt/indico/tmp/.cache
+      MPLCONFIGDIR: /opt/indico/tmp/matplotlib
+    volumes:
+      - indico-archive:/opt/indico/archive
+      - indico-custom:/opt/indico/custom
+      - indico-log:/opt/indico/log
+      - indico-cache:/opt/indico/cache
+      - type: bind
+        source: ./data/indico.conf
+        target: /opt/indico/etc/indico.conf
+        read_only: true
+      - type: bind
+        source: ./data/logging.yaml
+        target: /opt/indico/etc/logging.yaml
+        read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    tmpfs:
+      - /opt/indico/tmp:mode=0777
+      - /var/cache/fontconfig:uid=999,gid=999,mode=0775
+    networks:
+      - indico-internal
+
+  indico-celery-beat:
+    image: ${INDICO_IMAGE:-ghcr.io/indico/indico:3.3}
+    container_name: indico-celery-beat
+    restart: unless-stopped
+    command: /opt/indico/run_celery.sh beat
+    env_file: .env
+    environment:
+      INDICO_CONFIG: /opt/indico/etc/indico.conf
+      INDICO_LOGGING_CONFIG: /opt/indico/etc/logging.yaml
+      XDG_CACHE_HOME: /opt/indico/tmp/.cache
+      MPLCONFIGDIR: /opt/indico/tmp/matplotlib
+    volumes:
+      - indico-archive:/opt/indico/archive
+      - indico-custom:/opt/indico/custom
+      - indico-log:/opt/indico/log
+      - indico-cache:/opt/indico/cache
+      - type: bind
+        source: ./data/indico.conf
+        target: /opt/indico/etc/indico.conf
+        read_only: true
+      - type: bind
+        source: ./data/logging.yaml
+        target: /opt/indico/etc/logging.yaml
+        read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    tmpfs:
+      - /opt/indico/tmp:mode=0777
+      - /var/cache/fontconfig:uid=999,gid=999,mode=0775
+    networks:
+      - indico-internal
+
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:15}
+    container_name: indico-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER:-indico}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?Define PGPASSWORD en .env}
+      POSTGRES_DB: ${PGDATABASE:-indico}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-indico} -d ${PGDATABASE:-indico}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - indico-internal
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7}
+    container_name: indico-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - indico-internal
+
+volumes:
+  postgres-data:
+  redis-data:
+  indico-archive:
+  indico-custom:
+  indico-static:
+  indico-log:
+  indico-cache:
+
+networks:
+  # Red privada interna: DB, Redis, Celery y el web se comunican aqui.
+  indico-internal:
+  # Red compartida con Traefik/Dokploy: solo el web se conecta a ella.
+  dokploy-network:
+    external: true
