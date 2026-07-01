@@ -153,10 +153,12 @@ En el panel DNS (NIC.ar, el del proveedor, o Cloudflare) creá:
 | A     | `@`           | `IP_DE_LA_VPS`   | 300 |
 | A     | `www`         | `IP_DE_LA_VPS`   | 300 |
 | A     | `indico`      | `IP_DE_LA_VPS`   | 300 |
+| A     | `dokploy`     | `IP_DE_LA_VPS`   | 300 |
 
 - `@` = el dominio raíz `matudev.com.ar`.
 - `www` = `www.matudev.com.ar`.
 - `indico` = `indico.matudev.com.ar`.
+- `dokploy` = `dokploy.matudev.com.ar` (panel de administración de Dokploy; ver §8).
 
 > Alternativa: un registro **wildcard** `A  *  IP_DE_LA_VPS` cubre cualquier subdominio de una,
 > pero es más explícito y seguro declarar solo los que usás.
@@ -167,7 +169,8 @@ Verificar la propagación (desde tu máquina):
 dig +short matudev.com.ar
 dig +short www.matudev.com.ar
 dig +short indico.matudev.com.ar
-# Los tres deben devolver la IP de la VPS.
+dig +short dokploy.matudev.com.ar
+# Los cuatro deben devolver la IP de la VPS.
 ```
 
 **No sigas con los certificados HTTPS (§12) hasta que los tres nombres resuelvan a la VPS.**
@@ -317,9 +320,41 @@ El script:
 En el primer ingreso creás el **usuario administrador** del panel. Hacelo cuanto antes:
 mientras no exista admin, cualquiera que llegue al 3000 puede crearlo.
 
-**Recomendado:** en **Settings → Server/Domain** de Dokploy, asignale al panel su propio
-subdominio con HTTPS (p. ej. `dokploy.matudev.com.ar`, agregando su registro A en el §4).
-Así dejás de exponer el 3000 y accedés por HTTPS con login.
+### 8.1. Asignar `dokploy.matudev.com.ar` al panel (paso a paso)
+
+Objetivo: dejar de acceder por `IP:3000` y entrar al panel por `https://dokploy.matudev.com.ar`
+con certificado válido. Traefik (ya corriendo) publica el propio panel de Dokploy.
+
+**Requisito previo:** el registro A `dokploy` → IP de la VPS ya creado y propagado (§4). Verificá:
+
+```bash
+dig +short dokploy.matudev.com.ar    # debe devolver la IP de la VPS
+```
+
+**Pasos en el panel:**
+
+1. Entrá al panel (por túnel SSH o `IP:3000`, como en §8) y logueate como admin.
+2. Andá a **Settings → Server** (según versión, "Web Server" / "Web Domain").
+3. En **Domain**, cargá: `dokploy.matudev.com.ar`.
+4. En **HTTPS**, activá **Let's Encrypt** y cargá un **email** válido (para avisos del certificado).
+5. Guardá / aplicá. Dokploy reconfigura Traefik: crea el router del panel para ese Host y pide el
+   certificado. Esperá unos segundos a que emita.
+6. Abrí **`https://dokploy.matudev.com.ar`** → debe cargar el panel por HTTPS con candado válido.
+
+**Cerrar el puerto 3000 una vez que el subdominio funciona** (ya no hace falta exponerlo):
+
+```bash
+# Si lo habías abierto a tu IP (§6 opción B), quitá esa regla:
+sudo ufw status numbered          # ver el número de la regla del 3000
+sudo ufw delete <NUMERO>          # borrar la regla del puerto 3000
+sudo ufw status verbose
+```
+
+Desde ahí, el acceso al panel es solo por `https://dokploy.matudev.com.ar` (con login) y, como
+respaldo, por túnel SSH. El 3000 deja de estar expuesto a Internet.
+
+> Si el certificado del panel no emite, es la misma causa que en §12/§18: DNS sin propagar o
+> puerto 80 cerrado. Corregí eso y reintentá desde Settings.
 
 ---
 
@@ -624,9 +659,9 @@ un backup de la DB no alcanza para reconstruir el sitio idéntico.
 Escenario: la VPS se perdió (falla, borrado, migración). Reconstrucción completa en una VPS nueva:
 
 1. **Aprovisionar VPS nueva** (§5) y **hardening** (§6).
-2. **Repuntar el DNS** (§4): cambiar los registros A (`@`, `www`, `indico`) a la **nueva IP**.
-   Bajá el TTL a `300` con anticipación si sabés que vas a migrar.
-3. **Instalar Docker + Dokploy** (§7, §8).
+2. **Repuntar el DNS** (§4): cambiar los registros A (`@`, `www`, `indico`, `dokploy`) a la
+   **nueva IP**. Bajá el TTL a `300` con anticipación si sabés que vas a migrar.
+3. **Instalar Docker + Dokploy** (§7, §8) y reasignar `dokploy.matudev.com.ar` al panel (§8.1).
 4. **Traer el repo** y **restaurar el `.env`** desde tu copia segura (§13). Debe tener el
    **mismo `INDICO_SECRET_KEY` y `PGPASSWORD`** que la instalación original.
 5. **Levantar el stack** en Dokploy con `docker-compose.dokploy.yml` (§11), **sin hacer bootstrap**
@@ -668,7 +703,7 @@ Escenario: la VPS se perdió (falla, borrado, migración). Reconstrucción compl
 
 **Dominio y DNS**
 - [ ] `matudev.com.ar` registrado y a tu nombre.
-- [ ] Registros A `@`, `www`, `indico` → IP de la VPS (`dig` los tres resuelve OK).
+- [ ] Registros A `@`, `www`, `indico`, `dokploy` → IP de la VPS (`dig` los cuatro resuelve OK).
 
 **Servidor / hardening**
 - [ ] Usuario sudo no-root; login SSH por clave; `PermitRootLogin no` y `PasswordAuthentication no`.
@@ -678,7 +713,7 @@ Escenario: la VPS se perdió (falla, borrado, migración). Reconstrucción compl
 
 **Dokploy / Traefik**
 - [ ] Dokploy instalado; admin del panel creado inmediatamente.
-- [ ] Panel accesible por túnel SSH o por subdominio con HTTPS (no por IP:3000 abierto).
+- [ ] Panel accesible por `https://dokploy.matudev.com.ar` (HTTPS + login); puerto 3000 cerrado en `ufw`.
 - [ ] `dokploy-network` existe; Traefik levantado.
 
 **Landing**
